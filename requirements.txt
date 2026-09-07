@@ -3,6 +3,5 @@ opencv-python-headless
 numpy
 pandas
 plotly
-matplotlib
 openpyxl
 requests
