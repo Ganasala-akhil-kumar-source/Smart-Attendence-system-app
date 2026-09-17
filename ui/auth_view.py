@@ -1,14 +1,93 @@
+import os
+import random
 import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
 import streamlit as st
 from database.crud import verify_admin_login, update_admin_password, get_student
-from database.mailer import (
-    DEFAULT_ADMIN_EMAIL,
-    generate_otp,
-    send_password_change_request_email,
-    get_smtp_config
-)
+
+DEFAULT_ADMIN_EMAIL = "arjunakhil977@gmail.com"
+
+def generate_otp(length: int = 6) -> str:
+    """Generates a secure 6-digit random numeric verification code."""
+    return "".join(str(random.randint(0, 9)) for _ in range(length))
+
+def get_smtp_config():
+    """Retrieves SMTP sender credentials from Streamlit secrets, environment, or session state."""
+    if hasattr(st, "secrets") and "email" in st.secrets:
+        return {
+            "server": st.secrets["email"].get("smtp_server", "smtp.gmail.com"),
+            "port": int(st.secrets["email"].get("smtp_port", 587)),
+            "sender": st.secrets["email"].get("sender_email", ""),
+            "password": st.secrets["email"].get("sender_password", "")
+        }
+    sender = os.environ.get("ALERT_SENDER_EMAIL", "")
+    password = os.environ.get("ALERT_SENDER_PASSWORD", "")
+    if sender and password:
+        return {
+            "server": "smtp.gmail.com",
+            "port": 587,
+            "sender": sender,
+            "password": password
+        }
+    if "smtp_sender" in st.session_state and "smtp_password" in st.session_state:
+        return {
+            "server": "smtp.gmail.com",
+            "port": 587,
+            "sender": st.session_state["smtp_sender"],
+            "password": st.session_state["smtp_password"]
+        }
+    return None
+
+def send_password_change_request_email(otp_code: str, recipient_email: str = DEFAULT_ADMIN_EMAIL) -> tuple[bool, str]:
+    """Sends a verification email with a 6-digit OTP to the admin email."""
+    now_str = datetime.now().strftime("%d-%b-%Y at %I:%M %p")
+    config = get_smtp_config()
+    subject = "🚨 Security Alert: Admin Password Change Request - Smart Attendance"
+
+    body_text = f"""Hello,
+
+A request has been initiated to change the Administrator password for your Smart Attendance System.
+
+Time: {now_str}
+Recipient: {recipient_email}
+
+Your 6-Digit Verification Code:
+{otp_code}
+
+(Valid for 10 minutes)
+
+If YOU requested this password change, enter this verification code in the application to authorize the update.
+
+If you did NOT request this change, DO NOT share this code with anyone. Someone may be trying to access your administrative account.
+
+Regards,
+Smart Attendance Security System
+"""
+
+    if config and config.get("sender") and config.get("password"):
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = f"Smart Attendance Security <{config['sender']}>"
+            msg["To"] = recipient_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body_text, "plain"))
+
+            server = smtplib.SMTP(config["server"], config["port"], timeout=15)
+            server.starttls()
+            server.login(config["sender"], config["password"])
+            server.send_message(msg)
+            server.quit()
+            return True, f"✓ Security verification code sent to {recipient_email}. Please check your inbox."
+        except Exception as e:
+            return False, f"Failed to send email via SMTP: {e}"
+
+    return False, f"SMTP sender not configured yet. (Verification Code: {otp_code})"
 
 def render_login_view():
+    """Renders dual-role login interface for Administrators and Students."""
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown(
@@ -23,6 +102,7 @@ def render_login_view():
 
         tab_student, tab_admin = st.tabs(["🎓 Student Login", "👨‍💼 Faculty / Admin Login"])
 
+        # Tab 1: Student Login (Self-Service)
         with tab_student:
             st.subheader("Student Self-Service Portal")
             st.caption("Enter your Student ID / Roll Number to view your personal attendance records.")
@@ -46,6 +126,16 @@ def render_login_view():
                         else:
                             st.error(f"Student ID '{student_id}' not found in registry. Please contact administration.")
 
+            st.markdown(
+                """
+                <div style="font-size: 0.82rem; color: #64748b; margin-top: 10px;">
+                    💡 <i>Try demo student IDs: <code>CS202401</code>, <code>CS202402</code>, <code>IT202401</code></i>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        # Tab 2: Admin Login
         with tab_admin:
             st.subheader("Administrator / Faculty Sign In")
             with st.form("admin_login_form"):
@@ -68,6 +158,10 @@ def render_login_view():
             st.caption("Default admin credentials: `admin` / `admin123`")
 
 def render_security_view():
+    """
+    Renders password management with 2-Factor Email Authorization to arjunakhil977@gmail.com
+    and administrative security controls.
+    """
     st.header("⚙️ Admin & Security Settings")
     st.markdown("Manage administrator credentials with two-factor email verification and security policies.")
 
